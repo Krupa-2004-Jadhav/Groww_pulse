@@ -1,0 +1,125 @@
+// Groww Pulse — data model (Hours 0-6 foundation)
+// SQLite for local/demo simplicity; swap provider to postgresql for deployment.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Instrument {
+  id              String   @id @default(cuid())
+  symbol          String   @unique
+  name            String
+  exchange        String // NSE | BSE
+  sector          String
+  benchmarkSymbol String   @default("NIFTY50")
+  createdAt       DateTime @default(now())
+
+  watchlistItems  WatchlistItem[]
+  snapshots       InstrumentSnapshot[]
+  events          Event[]
+}
+
+model Watchlist {
+  id             String    @id @default(cuid())
+  name           String
+  createdAt      DateTime  @default(now())
+  // Checkpoint A: when the watchlist itself was last opened.
+  // Deliberately NOT bumped by background refreshes — only by an explicit
+  // "seen" action — so a fetch that just repopulates data can't silently
+  // move the baseline out from under the user.
+  lastSeenAt     DateTime?
+  lastReviewedAt DateTime?
+
+  items            WatchlistItem[]
+  preferences      WatchlistPreferences?
+  acknowledgements StockAcknowledgement[]
+}
+
+model WatchlistItem {
+  id           String    @id @default(cuid())
+  watchlistId  String
+  instrumentId String
+  position     Int
+  createdAt    DateTime  @default(now())
+  removedAt    DateTime?
+
+  watchlist  Watchlist  @relation(fields: [watchlistId], references: [id])
+  instrument Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@unique([watchlistId, instrumentId])
+}
+
+model WatchlistPreferences {
+  watchlistId          String  @id
+  priceThresholdPct    Float   @default(3.0)
+  volumeThresholdRatio Float   @default(2.0)
+  sentimentEnabled     Boolean @default(true)
+  eventAlertsEnabled   Boolean @default(true)
+  sensitivity          String  @default("balanced") // relaxed | balanced | high
+  benchmarkSymbol      String  @default("NIFTY50")
+
+  watchlist Watchlist @relation(fields: [watchlistId], references: [id])
+}
+
+// Checkpoint B: per-stock acknowledgement, independent of the watchlist-level
+// checkpoint. A story stays highlighted until the user explicitly reviews it,
+// even across multiple watchlist opens.
+model StockAcknowledgement {
+  id             String   @id @default(cuid())
+  watchlistId    String
+  instrumentId   String
+  acknowledgedAt DateTime @default(now())
+
+  watchlist Watchlist @relation(fields: [watchlistId], references: [id])
+
+  @@unique([watchlistId, instrumentId])
+}
+
+// Point-in-time market/sentiment state for an instrument. A new row per
+// ingestion tick; the change engine diffs the latest row against the row
+// nearest the user's checkpoint rather than against "the previous fetch".
+model InstrumentSnapshot {
+  id           String   @id @default(cuid())
+  instrumentId String
+  capturedAt   DateTime
+
+  price         Float
+  previousClose Float
+  volume        Float
+  avgVolume20d  Float
+  volatility5d  Float
+  volatility30d Float
+
+  // Benchmark/sector return over the same window this snapshot represents,
+  // so relative performance can be computed without a second time series.
+  benchmarkReturnPct Float @default(0)
+
+  sentimentScore         Float?
+  previousSentimentScore Float?
+  sentimentArticleCount  Int    @default(0)
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@index([instrumentId, capturedAt])
+}
+
+model Event {
+  id           String   @id @default(cuid())
+  instrumentId String
+  eventType    String // board_meeting | credit_rating | management_change | corporate_action | investor_meet | strategic_event | general_update
+  title        String
+  summary      String
+  sourceUrl    String
+  publishedAt  DateTime
+  detectedAt   DateTime @default(now())
+  confidence   String // low | medium | high
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@index([instrumentId, publishedAt])
+}
