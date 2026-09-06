@@ -1,5 +1,13 @@
-// Groww Pulse — data model (Hours 0-6 foundation)
-// SQLite for local/demo simplicity; swap provider to postgresql for deployment.
+// Pulse — data model per Pulse_Implementation_Plan.pdf §4.
+//
+// SQLite for local dev (explicitly permitted by the plan: "SQLite can
+// substitute for local dev but Postgres is the target"). Two Postgres
+// primitives don't exist here and are substituted, noted at each use site:
+//   - BIGSERIAL / gen_random_uuid()  -> Prisma autoincrement()/cuid()
+//   - GREATEST(a, b)                 -> SQLite's multi-arg MAX(a, b) (see
+//     lib/watermark.ts) — same semantics, different spelling.
+// Swapping datasource provider to "postgresql" and adjusting those two call
+// sites is the only work needed to move to the target DB.
 
 generator client {
   provider = "prisma-client-js"
@@ -10,116 +18,140 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Instrument {
-  id              String   @id @default(cuid())
-  symbol          String   @unique
-  name            String
-  exchange        String // NSE | BSE
-  sector          String
-  benchmarkSymbol String   @default("NIFTY50")
-  createdAt       DateTime @default(now())
+// ---------- reference & market data ----------
 
-  watchlistItems  WatchlistItem[]
-  snapshots       InstrumentSnapshot[]
-  events          Event[]
+model Symbol {
+  symbol   String @id
+  name     String
+  exchange String @default("US")
+
+  quoteLatest   QuoteLatest?
+  bars          BarDaily[]
+  stats         SymbolStats?
+  events        SymbolEvent[]
+  watchlistItems WatchlistItem[]
+}
+
+model QuoteLatest {
+  symbol     String   @id
+  price      Float
+  dayOpen    Float?
+  dayHigh    Float?
+  dayLow     Float?
+  prevClose  Float?
+  volume     Float?
+  asOf       DateTime // when the price happened (from provider)
+  receivedAt DateTime // when we learned it
+  source     String
+
+  instrument Symbol @relation(fields: [symbol], references: [symbol])
+}
+
+model BarDaily {
+  symbol    String
+  barDate   DateTime // stored at UTC midnight; compared by date only
+  open      Float?
+  high      Float?
+  low       Float?
+  close     Float?
+  volume    Float?
+  adjFactor Float    @default(1.0) // corporate-action adjustment
+
+  instrument Symbol @relation(fields: [symbol], references: [symbol])
+
+  @@id([symbol, barDate])
+}
+
+// Rolling stats recomputed by the rollup job.
+model SymbolStats {
+  symbol        String   @id
+  vol20d        Float? // stddev of daily returns, 20d
+  avgVolume20d  Float?
+  high52w       Float?
+  low52w        Float?
+  beta          Float? // vs market index
+  updatedAt     DateTime
+
+  instrument Symbol @relation(fields: [symbol], references: [symbol])
+}
+
+// ---------- append-only event log ----------
+
+model SymbolEvent {
+  seq               Int       @id @default(autoincrement()) // the watermark unit
+  symbol            String
+  eventType         String // price_move|volume_surge|vol_expansion|relative_perf|filing|week52_break|gap
+  tier              String // low|medium|high
+  score             Float // 0..100 attention sub-contribution or event score
+  reason            String // plain-English sentence
+  occurredAt        DateTime
+  resolvedAt        DateTime? // NULL = still active (Track A)
+  triggerMetric     String? // e.g. 'z_score' — for reconciliation
+  triggerThreshold  Float?
+  clearStreak       Int       @default(0) // hysteresis counter
+  dedupeKey         String    @unique // symbol+type+date-bucket+tier
+
+  instrument      Symbol           @relation(fields: [symbol], references: [symbol])
+  userEventStates UserEventState[]
+
+  @@index([symbol])
+  @@index([resolvedAt])
+}
+
+// ---------- watchlists ----------
+
+model User {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  watchlists Watchlist[]
 }
 
 model Watchlist {
-  id             String    @id @default(cuid())
-  name           String
-  createdAt      DateTime  @default(now())
-  // Checkpoint A: when the watchlist itself was last opened.
-  // Deliberately NOT bumped by background refreshes — only by an explicit
-  // "seen" action — so a fetch that just repopulates data can't silently
-  // move the baseline out from under the user.
-  lastSeenAt     DateTime?
-  lastReviewedAt DateTime?
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
 
-  items            WatchlistItem[]
-  preferences      WatchlistPreferences?
-  acknowledgements StockAcknowledgement[]
+  user       User            @relation(fields: [userId], references: [id])
+  items      WatchlistItem[]
+  readStates ReadState[] // one per (userId, watchlistId); MVP has a single owning user, so effectively one
 }
 
 model WatchlistItem {
-  id           String    @id @default(cuid())
-  watchlistId  String
-  instrumentId String
-  position     Int
-  createdAt    DateTime  @default(now())
-  removedAt    DateTime?
+  id            String    @id @default(cuid())
+  watchlistId   String
+  symbol        String
+  position      Float // fractional rank, avoids reorder collisions
+  addedAt       DateTime  @default(now())
+  seedWatermark Int // events before this are NOT backfilled to the user
 
-  watchlist  Watchlist  @relation(fields: [watchlistId], references: [id])
-  instrument Instrument @relation(fields: [instrumentId], references: [id])
+  watchlist  Watchlist @relation(fields: [watchlistId], references: [id])
+  instrument Symbol    @relation(fields: [symbol], references: [symbol])
 
-  @@unique([watchlistId, instrumentId])
+  @@unique([watchlistId, symbol]) // duplicate add = no-op
 }
 
-model WatchlistPreferences {
-  watchlistId          String  @id
-  priceThresholdPct    Float   @default(3.0)
-  volumeThresholdRatio Float   @default(2.0)
-  sentimentEnabled     Boolean @default(true)
-  eventAlertsEnabled   Boolean @default(true)
-  sensitivity          String  @default("balanced") // relaxed | balanced | high
-  benchmarkSymbol      String  @default("NIFTY50")
-
-  watchlist Watchlist @relation(fields: [watchlistId], references: [id])
-}
-
-// Checkpoint B: per-stock acknowledgement, independent of the watchlist-level
-// checkpoint. A story stays highlighted until the user explicitly reviews it,
-// even across multiple watchlist opens.
-model StockAcknowledgement {
-  id             String   @id @default(cuid())
-  watchlistId    String
-  instrumentId   String
-  acknowledgedAt DateTime @default(now())
+// ---------- per-user read state (Track: delivery) ----------
+model ReadState {
+  userId      String
+  watchlistId String
+  watermark   Int       @default(0) // highest CONFIRMED-delivered seq
+  lastSeenAt  DateTime? // coarse "user opened the list"
 
   watchlist Watchlist @relation(fields: [watchlistId], references: [id])
 
-  @@unique([watchlistId, instrumentId])
+  @@id([userId, watchlistId])
 }
 
-// Point-in-time market/sentiment state for an instrument. A new row per
-// ingestion tick; the change engine diffs the latest row against the row
-// nearest the user's checkpoint rather than against "the previous fetch".
-model InstrumentSnapshot {
-  id           String   @id @default(cuid())
-  instrumentId String
-  capturedAt   DateTime
+// ---------- per-user, per-event acknowledgement (Track B) ----------
+model UserEventState {
+  userId         String
+  eventId        Int
+  acknowledgedAt DateTime?
+  dismissedAt    DateTime?
 
-  price         Float
-  previousClose Float
-  volume        Float
-  avgVolume20d  Float
-  volatility5d  Float
-  volatility30d Float
+  event SymbolEvent @relation(fields: [eventId], references: [seq])
 
-  // Benchmark/sector return over the same window this snapshot represents,
-  // so relative performance can be computed without a second time series.
-  benchmarkReturnPct Float @default(0)
-
-  sentimentScore         Float?
-  previousSentimentScore Float?
-  sentimentArticleCount  Int    @default(0)
-
-  instrument Instrument @relation(fields: [instrumentId], references: [id])
-
-  @@index([instrumentId, capturedAt])
-}
-
-model Event {
-  id           String   @id @default(cuid())
-  instrumentId String
-  eventType    String // board_meeting | credit_rating | management_change | corporate_action | investor_meet | strategic_event | general_update
-  title        String
-  summary      String
-  sourceUrl    String
-  publishedAt  DateTime
-  detectedAt   DateTime @default(now())
-  confidence   String // low | medium | high
-
-  instrument Instrument @relation(fields: [instrumentId], references: [id])
-
-  @@index([instrumentId, publishedAt])
+  @@id([userId, eventId])
 }
