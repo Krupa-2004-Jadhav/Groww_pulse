@@ -80,4 +80,20 @@ describe("ReplayProvider — determinism (Phase 1, Test Gate 1)", () => {
     const results = await provider.searchSymbols("tesla");
     expect(results.some((r) => r.symbol === "TSLA")).toBe(true);
   });
+
+  it("regression: the first live quote continues from the historical series' last close, not an unrelated anchor", async () => {
+    // Caught live: before this was fixed, getQuotes' walk and
+    // getDailyBars' walk used independent anchors, so a symbol's very
+    // first live quote could land tens of percent away from its own
+    // "previous close" — producing a fabricated 40-sigma "crash" the
+    // instant a symbol was added. The two series must connect.
+    const provider = new ReplayProvider({ seed: "continuity-test" });
+    const bars = await provider.getDailyBars("AAPL", 260);
+    const lastClose = bars[bars.length - 1].close;
+
+    const [firstLiveQuote] = await provider.getQuotes(["AAPL"]);
+
+    const pctDiff = Math.abs((firstLiveQuote.price - lastClose) / lastClose);
+    expect(pctDiff).toBeLessThan(0.05); // one tick's worth of movement (~1.5% step vol), not an unrelated random walk
+  });
 });

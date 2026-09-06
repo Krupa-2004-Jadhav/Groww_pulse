@@ -30,6 +30,7 @@ interface ReplayProviderOptions {
 const BASE_PRICE_MIN = 20;
 const BASE_PRICE_RANGE = 480;
 const STEP_VOLATILITY = 0.015; // ~1.5% per tick — deliberately punchy so a short demo shows movement
+const DEFAULT_DAILY_OUTPUTSIZE = 260; // matches getDailyBars' default and historical-seed.ts's default — kept as one constant so the two can't silently drift apart
 
 /** FNV-1a → murmur fmix32 finalizer. Cheap, deterministic, well-distributed. Not cryptographic — doesn't need to be. */
 function seededUnit(key: string): number {
@@ -101,7 +102,17 @@ export class ReplayProvider implements MarketDataProvider, HistoricalDataProvide
   }
 
   private priceAtTick(symbol: string, tick: number): number {
-    let price = basePrice(this.seed, symbol);
+    // The live-quote walk (plain `symbol` key) anchors to the LAST close of
+    // the historical daily walk (`${symbol}:daily` key), rather than
+    // starting its own independent random walk from basePrice(). Without
+    // this, the two series are uncorrelated, and a symbol's first live
+    // quote can drift arbitrarily far from where its seeded "previous
+    // close" (bars_daily) ended — producing nonsense like a fabricated
+    // 40-sigma "crash" the moment a symbol is added. This was caught live
+    // (see conversation record), not assumed.
+    const isDailyKey = symbol.endsWith(":daily");
+    let price = isDailyKey ? basePrice(this.seed, symbol) : this.priceAtTick(`${symbol}:daily`, DEFAULT_DAILY_OUTPUTSIZE - 1);
+
     for (let t = 0; t <= tick; t++) {
       price *= 1 + stepReturn(this.seed, symbol, t);
       for (const evt of this.script) {
@@ -181,7 +192,7 @@ export class ReplayProvider implements MarketDataProvider, HistoricalDataProvide
   // Uses a separate namespace (`${symbol}:daily`) from the live-quote walk
   // above so seeding history and polling live quotes never share state.
 
-  async getDailyBars(symbol: string, outputsize = 260): Promise<HistoricalBar[]> {
+  async getDailyBars(symbol: string, outputsize = DEFAULT_DAILY_OUTPUTSIZE): Promise<HistoricalBar[]> {
     const key = `${symbol}:daily`;
     const bars: HistoricalBar[] = [];
     const today = new Date(this.startTime);

@@ -1,6 +1,5 @@
 import { Signal, SignalCategory, Tier } from "@/lib/signals/types";
 import { attentionScore } from "./attention-score";
-import { ChangeEvent } from "@/lib/watermark/changes";
 
 /** Maps a stored event's `eventType` back to the weight category its originating signal belongs to (plan §5's WEIGHTS). */
 const EVENT_TYPE_TO_CATEGORY: Record<string, SignalCategory> = {
@@ -15,12 +14,22 @@ const EVENT_TYPE_TO_CATEGORY: Record<string, SignalCategory> = {
   filing_dividend: "event",
 };
 
-export interface Story {
+/** The minimal shape this needs — deliberately NOT importing watermark/changes's ChangeEvent, since that fixes occurredAt to `Date` while the browser only ever sees the JSON-serialized `string` form of the same data. */
+export interface GroupableEvent {
+  seq: number;
+  symbol: string;
+  eventType: string;
+  tier: string;
+  score: number;
+  reason: string;
+}
+
+export interface Story<E extends GroupableEvent = GroupableEvent> {
   symbol: string;
   attentionScore: number;
   tier: Tier;
   reason: string;
-  events: ChangeEvent[];
+  events: E[];
 }
 
 /**
@@ -32,17 +41,19 @@ export interface Story {
  *
  * Pure and synchronous: takes whatever /changes already returned (already
  * filtered by watermark, resolution, ack state, and seed_watermark), so
- * this never re-queries anything.
+ * this never re-queries anything. Generic over the event shape so both the
+ * server (Date) and the client (JSON string) representations work without
+ * a cast.
  */
-export function groupIntoStories(events: ChangeEvent[]): Story[] {
-  const bySymbol = new Map<string, ChangeEvent[]>();
+export function groupIntoStories<E extends GroupableEvent>(events: E[]): Story<E>[] {
+  const bySymbol = new Map<string, E[]>();
   for (const event of events) {
     const list = bySymbol.get(event.symbol) ?? [];
     list.push(event);
     bySymbol.set(event.symbol, list);
   }
 
-  const stories: Story[] = [];
+  const stories: Story<E>[] = [];
   for (const [symbol, symbolEvents] of bySymbol) {
     const signals: Signal[] = symbolEvents.map((e) => ({
       category: EVENT_TYPE_TO_CATEGORY[e.eventType] ?? "event",
