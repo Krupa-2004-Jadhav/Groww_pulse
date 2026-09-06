@@ -52,6 +52,21 @@ describe("ReplayProvider — determinism (Phase 1, Test Gate 1)", () => {
     await expect(provider.getQuotes(["AAPL"])).rejects.toThrow(/outage/i); // tick 2 — outage
   });
 
+  it("regression: an outage actually ends — the tick still advances while it's active, so a later poll recovers", async () => {
+    // Caught via the Phase 10 demo scenario test: an earlier version froze
+    // the tick counter during an outage, so "pending tick" could never
+    // reach `toTick` and every subsequent poll failed forever.
+    const provider = new ReplayProvider({
+      seed: "outage-recovery-test",
+      script: [{ type: "feed-outage", symbol: "AAPL", fromTick: 1, toTick: 3 }],
+    });
+
+    await provider.getQuotes(["AAPL"]); // tick 0 — fine
+    await expect(provider.getQuotes(["AAPL"])).rejects.toThrow(); // tick 1 — outage
+    await expect(provider.getQuotes(["AAPL"])).rejects.toThrow(); // tick 2 — outage
+    await expect(provider.getQuotes(["AAPL"])).resolves.toBeDefined(); // tick 3 — recovered
+  });
+
   it("scripted gap/spike moves price by the given percentage at the given tick", async () => {
     const provider = new ReplayProvider({
       seed: "gap-test",

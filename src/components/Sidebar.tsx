@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useWatchlists, useCreateWatchlist } from "@/lib/client/hooks";
 
 export function Sidebar({
@@ -14,8 +15,10 @@ export function Sidebar({
 }) {
   const { data, isLoading } = useWatchlists(userId);
   const createWatchlist = useCreateWatchlist(userId);
+  const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [runningDemo, setRunningDemo] = useState(false);
 
   const submit = () => {
     if (!name.trim()) return;
@@ -26,6 +29,18 @@ export function Sidebar({
         setCreating(false);
       },
     });
+  };
+
+  const runDemoScenario = async () => {
+    setRunningDemo(true);
+    try {
+      const res = await fetch("/api/demo/run-scenario", { method: "POST" });
+      const result = await res.json();
+      await queryClient.invalidateQueries({ queryKey: ["watchlists", userId] });
+      onSelect(result.watchlistId);
+    } finally {
+      setRunningDemo(false);
+    }
   };
 
   return (
@@ -75,6 +90,17 @@ export function Sidebar({
           </button>
         ))}
       </nav>
+
+      <div className="mt-auto pt-4">
+        <button
+          onClick={runDemoScenario}
+          disabled={runningDemo}
+          className="w-full rounded-md border border-dashed border-zinc-300 px-2 py-1.5 text-xs font-medium text-zinc-500 hover:border-zinc-400 hover:text-zinc-700 disabled:opacity-50"
+          title="Runs a scripted, deterministic scenario: a gap, a volume spike, a split-adjusted history, and a feed outage with automatic recovery."
+        >
+          {runningDemo ? "Running scenario…" : "▶ Run demo scenario"}
+        </button>
+      </div>
     </aside>
   );
 }

@@ -101,17 +101,22 @@ export class ReplayProvider implements MarketDataProvider, HistoricalDataProvide
     this.startTime = (opts.startTime ?? new Date()).getTime();
   }
 
+  /**
+   * The live-quote walk's starting price: the LAST close of the historical
+   * daily walk (`${symbol}:daily` key), not an independent basePrice().
+   * Without this, the live and historical series are uncorrelated, and a
+   * symbol's first live quote can drift arbitrarily far from its own
+   * seeded "previous close" — producing nonsense like a fabricated
+   * 40-sigma "crash" the moment a symbol is added. Caught live against the
+   * running dev server, not assumed — see conversation record.
+   */
+  private liveAnchor(symbol: string): number {
+    return this.priceAtTick(`${symbol}:daily`, DEFAULT_DAILY_OUTPUTSIZE - 1);
+  }
+
   private priceAtTick(symbol: string, tick: number): number {
-    // The live-quote walk (plain `symbol` key) anchors to the LAST close of
-    // the historical daily walk (`${symbol}:daily` key), rather than
-    // starting its own independent random walk from basePrice(). Without
-    // this, the two series are uncorrelated, and a symbol's first live
-    // quote can drift arbitrarily far from where its seeded "previous
-    // close" (bars_daily) ended — producing nonsense like a fabricated
-    // 40-sigma "crash" the moment a symbol is added. This was caught live
-    // (see conversation record), not assumed.
     const isDailyKey = symbol.endsWith(":daily");
-    let price = isDailyKey ? basePrice(this.seed, symbol) : this.priceAtTick(`${symbol}:daily`, DEFAULT_DAILY_OUTPUTSIZE - 1);
+    let price = isDailyKey ? basePrice(this.seed, symbol) : this.liveAnchor(symbol);
 
     for (let t = 0; t <= tick; t++) {
       price *= 1 + stepReturn(this.seed, symbol, t);
@@ -122,6 +127,17 @@ export class ReplayProvider implements MarketDataProvider, HistoricalDataProvide
       }
     }
     return Math.max(0.01, price);
+  }
+
+  /** Product of any scripted 'gap' events' (1+pct) at this exact tick — a gap is an at-the-open, single-tick phenomenon, unlike 'spike' which folds into the ongoing walk via priceAtTick. */
+  private gapFactorAtTick(symbol: string, tick: number): number {
+    let factor = 1;
+    for (const evt of this.script) {
+      if (evt.symbol === symbol && evt.type === "gap" && evt.atTick === tick) {
+        factor *= 1 + evt.pct;
+      }
+    }
+    return factor;
   }
 
   private volumeAtTick(symbol: string, tick: number): number {
@@ -138,24 +154,35 @@ export class ReplayProvider implements MarketDataProvider, HistoricalDataProvide
     const quotes: Quote[] = [];
 
     for (const symbol of symbols) {
-      const pendingTick = (this.tickCounters.get(symbol) ?? -1) + 1;
+      // The tick always advances, outage or not — an outage means THIS
+      // call has no data, not that time stopped. (An earlier version froze
+      // the counter mid-outage, which meant the "pending" tick could never
+      // reach `toTick` and the outage never actually ended — caught by the
+      // Phase 10 demo scenario test, not assumed.)
+      const tick = (this.tickCounters.get(symbol) ?? -1) + 1;
+      this.tickCounters.set(symbol, tick);
 
       const outage = this.script.find(
         (e): e is Extract<ScriptedEvent, { type: "feed-outage" }> =>
-          e.type === "feed-outage" && e.symbol === symbol && pendingTick >= e.fromTick && pendingTick < e.toTick
+          e.type === "feed-outage" && e.symbol === symbol && tick >= e.fromTick && tick < e.toTick
       );
       if (outage) {
-        // Time deliberately does not advance during an outage — there is
-        // nothing to report, and resuming shouldn't show a fabricated gap
-        // for ticks that were never actually observed.
         throw new ProviderOutageError(symbol, this.name);
       }
 
-      const tick = pendingTick;
-      this.tickCounters.set(symbol, tick);
-
       const price = this.priceAtTick(symbol, tick);
-      const prevPrice = tick === 0 ? price : this.priceAtTick(symbol, tick - 1);
+      // tick 0's "previous close" is the continuity anchor itself (the
+      // historical series' last close) — using `price` here (as an earlier
+      // version did) would make dayOpen/prevClose both equal the
+      // POST-gap/spike price on the very first live tick, silently hiding
+      // any scripted gap from ever being observable in the OHLC fields.
+      const prevPrice = tick === 0 ? this.liveAnchor(symbol) : this.priceAtTick(symbol, tick - 1);
+      // dayOpen carries any scripted gap independently of prevClose — real
+      // OHLC data lets an open differ from the prior close; a Quote model
+      // where they're always equal (an earlier version of this file) makes
+      // a "gap" signal structurally undetectable, since gap = (open -
+      // prevClose) / prevClose is definitionally 0 when open == prevClose.
+      const dayOpen = prevPrice * this.gapFactorAtTick(symbol, tick);
       const volume = this.volumeAtTick(symbol, tick);
 
       let asOf = new Date(this.startTime + tick * this.tickIntervalMs);
@@ -175,9 +202,9 @@ export class ReplayProvider implements MarketDataProvider, HistoricalDataProvide
       quotes.push({
         symbol,
         price: round2(price),
-        dayOpen: round2(prevPrice),
-        dayHigh: round2(Math.max(price, prevPrice) * 1.002),
-        dayLow: round2(Math.min(price, prevPrice) * 0.998),
+        dayOpen: round2(dayOpen),
+        dayHigh: round2(Math.max(price, dayOpen, prevPrice) * 1.002),
+        dayLow: round2(Math.min(price, dayOpen, prevPrice) * 0.998),
         prevClose: round2(prevPrice),
         volume,
         asOf,
