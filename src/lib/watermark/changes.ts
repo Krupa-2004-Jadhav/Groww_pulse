@@ -14,6 +14,10 @@ export interface ChangeEvent {
 export interface ChangesResult {
   cursor: number;
   events: ChangeEvent[];
+  /** When the user last confirmed reading this watchlist (Watchlist-level "last seen," Phase 9's header framing). Null on a first-ever visit. */
+  lastSeenAt: string | null;
+  /** Every symbol currently on the watchlist — lets the UI derive the "quiet" section (symbols with no story) without a second round trip. */
+  symbols: string[];
 }
 
 /**
@@ -39,12 +43,13 @@ export async function getChanges(userId: string, watchlistId: string): Promise<C
     where: { userId_watchlistId: { userId, watchlistId } },
   });
   const watermark = readState?.watermark ?? 0;
+  const lastSeenAt = readState?.lastSeenAt?.toISOString() ?? null;
 
   const items = await prisma.watchlistItem.findMany({ where: { watchlistId } });
-  if (items.length === 0) return { cursor: safeSeq, events: [] };
+  const symbols = items.map((i) => i.symbol);
+  if (items.length === 0) return { cursor: safeSeq, events: [], lastSeenAt, symbols };
 
   const seedWatermarkBySymbol = new Map(items.map((i) => [i.symbol, i.seedWatermark]));
-  const symbols = items.map((i) => i.symbol);
 
   const candidates = await prisma.symbolEvent.findMany({
     where: {
@@ -55,7 +60,7 @@ export async function getChanges(userId: string, watchlistId: string): Promise<C
     orderBy: { score: "desc" },
   });
 
-  if (candidates.length === 0) return { cursor: safeSeq, events: [] };
+  if (candidates.length === 0) return { cursor: safeSeq, events: [], lastSeenAt, symbols };
 
   const userStates = await prisma.userEventState.findMany({
     where: { userId, eventId: { in: candidates.map((c) => c.seq) } },
@@ -75,5 +80,5 @@ export async function getChanges(userId: string, watchlistId: string): Promise<C
       occurredAt: e.occurredAt,
     }));
 
-  return { cursor: safeSeq, events };
+  return { cursor: safeSeq, events, lastSeenAt, symbols };
 }

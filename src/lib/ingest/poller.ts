@@ -22,7 +22,11 @@ export class IngestPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
 
-  constructor(private readonly provider: MarketDataProvider) {}
+  constructor(
+    private readonly provider: MarketDataProvider,
+    /** Runs after every `start()`-driven poll cycle (not after direct pollOnce() calls) — e.g. the evaluation tick that turns fresh quotes into stories. Optional so Phase 2's tests don't need to know it exists. */
+    private readonly onAfterPoll?: (result: PollResult) => void | Promise<void>
+  ) {}
 
   /**
    * One ingestion cycle: fetch the deduplicated watched-symbol union, write
@@ -81,7 +85,14 @@ export class IngestPoller {
   }
 
   private async tick() {
-    await this.pollOnce();
+    const result = await this.pollOnce();
+    if (this.onAfterPoll) {
+      try {
+        await this.onAfterPoll(result);
+      } catch (err) {
+        console.error("[IngestPoller] onAfterPoll hook threw", err);
+      }
+    }
     this.scheduleNext();
   }
 
