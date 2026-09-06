@@ -168,3 +168,76 @@ describe("seedSymbolHistory + updateStats (Phase 3, Test Gate 3)", () => {
     expect(count).toBe(2);
   });
 });
+
+describe("updateStats — staleness guard (scaling: avoid recomputing on every poll cycle)", () => {
+  const created: string[] = [];
+
+  afterEach(async () => {
+    while (created.length) await cleanupSymbol(created.pop()!);
+  });
+
+  it("a symbol with no prior stats always computes, regardless of the guard", async () => {
+    const symbol = uniqueSymbol("FRESH");
+    created.push(symbol);
+    await prisma.symbol.create({ data: { symbol, name: symbol, exchange: "TEST" } });
+    const bars = Array.from({ length: 25 }, (_, i) => bar(symbol, `2026-01-${String(i + 1).padStart(2, "0")}`, 100 + i));
+    await seedSymbolHistory(symbol, new FixtureProvider(bars));
+
+    await updateStats(symbol);
+    const stats = await prisma.symbolStats.findUnique({ where: { symbol } });
+    expect(stats).not.toBeNull();
+  });
+
+  it("a second call within the refresh interval is a no-op (does not touch updatedAt or recompute)", async () => {
+    const symbol = uniqueSymbol("STALE");
+    created.push(symbol);
+    await prisma.symbol.create({ data: { symbol, name: symbol, exchange: "TEST" } });
+    const bars = Array.from({ length: 25 }, (_, i) => bar(symbol, `2026-01-${String(i + 1).padStart(2, "0")}`, 100 + i));
+    await seedSymbolHistory(symbol, new FixtureProvider(bars));
+
+    const t0 = new Date("2026-06-01T12:00:00Z");
+    await updateStats(symbol, { now: t0 });
+    const first = await prisma.symbolStats.findUnique({ where: { symbol } });
+
+    // 5 minutes later — well inside the 15-minute refresh interval.
+    await updateStats(symbol, { now: new Date(t0.getTime() + 5 * 60_000) });
+    const second = await prisma.symbolStats.findUnique({ where: { symbol } });
+
+    expect(second!.updatedAt.getTime()).toBe(first!.updatedAt.getTime());
+  });
+
+  it("a call past the refresh interval recomputes", async () => {
+    const symbol = uniqueSymbol("REFRESH");
+    created.push(symbol);
+    await prisma.symbol.create({ data: { symbol, name: symbol, exchange: "TEST" } });
+    const bars = Array.from({ length: 25 }, (_, i) => bar(symbol, `2026-01-${String(i + 1).padStart(2, "0")}`, 100 + i));
+    await seedSymbolHistory(symbol, new FixtureProvider(bars));
+
+    const t0 = new Date("2026-06-01T12:00:00Z");
+    await updateStats(symbol, { now: t0 });
+    const first = await prisma.symbolStats.findUnique({ where: { symbol } });
+
+    // 20 minutes later — past the 15-minute refresh interval.
+    await updateStats(symbol, { now: new Date(t0.getTime() + 20 * 60_000) });
+    const second = await prisma.symbolStats.findUnique({ where: { symbol } });
+
+    expect(second!.updatedAt.getTime()).toBeGreaterThan(first!.updatedAt.getTime());
+  });
+
+  it("force bypasses the guard even when fresh", async () => {
+    const symbol = uniqueSymbol("FORCE");
+    created.push(symbol);
+    await prisma.symbol.create({ data: { symbol, name: symbol, exchange: "TEST" } });
+    const bars = Array.from({ length: 25 }, (_, i) => bar(symbol, `2026-01-${String(i + 1).padStart(2, "0")}`, 100 + i));
+    await seedSymbolHistory(symbol, new FixtureProvider(bars));
+
+    const t0 = new Date("2026-06-01T12:00:00Z");
+    await updateStats(symbol, { now: t0 });
+    const first = await prisma.symbolStats.findUnique({ where: { symbol } });
+
+    await updateStats(symbol, { now: new Date(t0.getTime() + 1000), force: true });
+    const second = await prisma.symbolStats.findUnique({ where: { symbol } });
+
+    expect(second!.updatedAt.getTime()).toBeGreaterThan(first!.updatedAt.getTime());
+  });
+});

@@ -5,6 +5,20 @@ const ROLLING_WINDOW = 20;
 const YEAR_WINDOW = 252; // ~252 trading days/year
 export const MARKET_INDEX_SYMBOL = process.env.MARKET_INDEX_SYMBOL ?? "SPY";
 
+// bars_daily changes at most once per trading day (there isn't even a
+// same-day rollover job yet — it's seeded once and doesn't grow), but
+// runEvaluationTick calls updateStats() for every symbol on every
+// evaluation tick, which fires after every successful poll — every 10s
+// during market hours (plan Phase 2's cadence). Recomputing a full
+// 260-row reload + stddev/beta from scratch that often is ~5000x more
+// work than the data can possibly justify. This matches the plan's own
+// intent (Phase 3: "Rollup job, node-cron, every N minutes while market
+// open" — a cadence deliberately decoupled from the quote poller), which
+// the tick-triggered call site had collapsed into one. Fixed here rather
+// than by restructuring the scheduler, since a staleness guard is the
+// smaller, more localized change for the same effect.
+const STATS_REFRESH_INTERVAL_MS = 15 * 60_000;
+
 interface AdjustedBar {
   date: Date;
   close: number;
@@ -38,8 +52,21 @@ async function loadAdjustedBars(symbol: string): Promise<AdjustedBar[]> {
  * a symbol with a trading halt the index didn't have would be slightly
  * misaligned. Acceptable for a US-equities, non-halted demo universe;
  * a production version would join on `bar_date`.
+ *
+ * `force` bypasses the staleness guard — used by tests and by a genuine
+ * one-shot "recompute now" call (e.g. right after seeding new history),
+ * where skipping would leave symbol_stats absent instead of freshly wrong.
  */
-export async function updateStats(symbol: string): Promise<void> {
+export async function updateStats(symbol: string, opts: { now?: Date; force?: boolean } = {}): Promise<void> {
+  const now = opts.now ?? new Date();
+
+  if (!opts.force) {
+    const existing = await prisma.symbolStats.findUnique({ where: { symbol }, select: { updatedAt: true } });
+    if (existing && now.getTime() - existing.updatedAt.getTime() < STATS_REFRESH_INTERVAL_MS) {
+      return; // still fresh — bars_daily can't have changed meaningfully since the last recompute
+    }
+  }
+
   const bars = await loadAdjustedBars(symbol);
   if (bars.length < 2) return; // not enough history yet — leave stats absent rather than fabricate them
 
@@ -57,10 +84,15 @@ export async function updateStats(symbol: string): Promise<void> {
   const low52w = min(yearCloses);
   const betaValue = await computeSymbolBeta(symbol, returns);
 
+  // Stamped with `now` (not a fresh `new Date()`) so the write is
+  // consistent with the guard's own read-side comparison above — a
+  // caller injecting `now` for deterministic tests would otherwise have
+  // the staleness check compare against a simulated time while the actual
+  // stored timestamp silently used real wall-clock time.
   await prisma.symbolStats.upsert({
     where: { symbol },
-    create: { symbol, vol20d, avgVolume20d, high52w, low52w, beta: betaValue, updatedAt: new Date() },
-    update: { vol20d, avgVolume20d, high52w, low52w, beta: betaValue, updatedAt: new Date() },
+    create: { symbol, vol20d, avgVolume20d, high52w, low52w, beta: betaValue, updatedAt: now },
+    update: { vol20d, avgVolume20d, high52w, low52w, beta: betaValue, updatedAt: now },
   });
 }
 
