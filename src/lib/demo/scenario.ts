@@ -8,7 +8,15 @@ import { MARKET_INDEX_SYMBOL } from "@/lib/seed/rollup";
 import { getOrCreateDemoUser } from "@/lib/demo-user";
 
 const DEMO_SYMBOL = "DEMO";
-const DEMO_SEED = "pulse-scenario-v1";
+// Once DEMO_SYMBOL is on a real watchlist, the live background poller
+// (lib/pipeline/scheduler.ts) starts polling it too, using the app-wide
+// REPLAY_SEED singleton (see lib/providers/index.ts). If this scenario used
+// a DIFFERENT seed, the two providers would compute uncorrelated prices for
+// the same symbol — whichever last wrote quotes_latest would produce a
+// wild, meaningless jump the next time the other one polled. Matching the
+// seed means both walks agree at every tick by construction. Caught live
+// against the running dev server, not assumed.
+const DEMO_SEED = process.env.REPLAY_SEED ?? "pulse-demo";
 const DEMO_WATCHLIST_NAME = "Demo Scenario";
 
 export interface ScenarioStep {
@@ -57,15 +65,30 @@ export async function runDemoScenario(): Promise<ScenarioResult> {
     await prisma.watchlistItem.create({ data: { watchlistId: watchlist.id, symbol: DEMO_SYMBOL, position: 1, seedWatermark: 0 } });
   }
 
+  // ONE provider instance for the whole scenario — seeding AND every live
+  // tick. This matters, not just for tidiness: `priceAtTick`'s ":daily"
+  // anchor computation re-derives the historical walk from the CALLING
+  // instance's own `this.script`, not from what's actually stored in the
+  // database. An earlier version used a separate provider (with only the
+  // gap/volume/outage script) for live ticks — its anchor computation
+  // silently ignored the split (which lived in a different instance's
+  // script), producing a live price ~4x off from the real last close.
+  // Caught live, not assumed — one instance, one script, one consistent
+  // reality is the actual fix.
+  const scenarioScript: ScriptedEvent[] = [
+    { type: "split", symbol: `${DEMO_SYMBOL}:daily`, atTick: 150, fromFactor: 4, toFactor: 1 },
+    { type: "gap", symbol: DEMO_SYMBOL, atTick: 0, pct: 0.08 },
+    { type: "volume-surge", symbol: DEMO_SYMBOL, atTick: 1, multiplier: 4 },
+    { type: "feed-outage", symbol: DEMO_SYMBOL, fromTick: 2, toTick: 4 },
+  ];
+  const provider = new ReplayProvider({ seed: DEMO_SEED, script: scenarioScript });
+
   // Only seed once — re-running the scenario against already-seeded history
   // exercises the "never re-fetch what you already have" path too.
   const alreadySeeded = (await prisma.barDaily.count({ where: { symbol: DEMO_SYMBOL } })) > 0;
   if (!alreadySeeded) {
-    const historyScript: ScriptedEvent[] = [
-      { type: "split", symbol: `${DEMO_SYMBOL}:daily`, atTick: 150, fromFactor: 4, toFactor: 1 },
-    ];
-    await seedSymbolHistory(DEMO_SYMBOL, new ReplayProvider({ seed: DEMO_SEED, script: historyScript }));
-    await seedSymbolHistory(MARKET_INDEX_SYMBOL, new ReplayProvider({ seed: DEMO_SEED }));
+    await seedSymbolHistory(DEMO_SYMBOL, provider);
+    await seedSymbolHistory(MARKET_INDEX_SYMBOL, provider);
   }
   steps.push({
     label: "Historical seed with a mid-history 4-for-1 split",
@@ -76,24 +99,17 @@ export async function runDemoScenario(): Promise<ScenarioResult> {
 
   await runEvaluationTick(); // establishes baseline symbol_stats before any live quote exists
 
-  const liveScript: ScriptedEvent[] = [
-    { type: "gap", symbol: DEMO_SYMBOL, atTick: 0, pct: 0.08 },
-    { type: "volume-surge", symbol: DEMO_SYMBOL, atTick: 1, multiplier: 4 },
-    { type: "feed-outage", symbol: DEMO_SYMBOL, fromTick: 2, toTick: 4 },
-  ];
-  const liveProvider = new ReplayProvider({ seed: DEMO_SEED, script: liveScript });
-
-  await pollOnce(liveProvider);
+  await pollOnce(provider);
   await runEvaluationTick();
   steps.push({ label: "Live tick: +8% gap at the open", detail: "Fires a gap and/or price_move signal, market-adjusted." });
 
-  await pollOnce(liveProvider);
+  await pollOnce(provider);
   await runEvaluationTick();
   steps.push({ label: "Live tick: 4x volume surge", detail: "Fires a volume_surge signal, banded 'exceptional', no causal claim." });
 
   for (let i = 0; i < 2; i++) {
     try {
-      await liveProvider.getQuotes([DEMO_SYMBOL]);
+      await provider.getQuotes([DEMO_SYMBOL]);
       recordPollSuccess();
     } catch (err) {
       recordPollFailure(err instanceof Error ? err.message : String(err));
@@ -104,7 +120,7 @@ export async function runDemoScenario(): Promise<ScenarioResult> {
     detail: "Provider throws; the last known quote is left untouched, never overwritten with nulls.",
   });
 
-  await pollOnce(liveProvider);
+  await pollOnce(provider);
   await runEvaluationTick();
   steps.push({ label: "Recovery: feed resumes", detail: "The next successful poll clears the consecutive-failure streak." });
 

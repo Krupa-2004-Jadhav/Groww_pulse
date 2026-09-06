@@ -336,23 +336,54 @@ Re-running the scenario is idempotent: history isn't re-seeded
 and events aren't duplicated (Phase 6 dedupe) — both asserted directly in
 the scenario's own test suite.
 
-**Two real bugs were caught building this scenario**, not simulated for
-the writeup — worth stating because they show what the deterministic
-replay mode is actually for:
+**Five real bugs in `ReplayProvider` were caught building and running this
+scenario end-to-end**, not simulated for the writeup. Worth walking through
+in full, because they're exactly the class of bug that only shows up at an
+integration seam — every one of these passed its own function's unit tests
+in isolation, and every one produced nonsense the moment two pieces of the
+simulator were run together for real:
 
-- `ReplayProvider`'s live-quote walk and its historical-bars walk used
-  independent random-walk anchors, so a freshly-watched symbol's first
-  live quote could land tens of percent away from its own seeded
-  "previous close," producing a fabricated 40+ standard-deviation price
-  signal before any real movement occurred. Fixed by anchoring the live
-  walk to the historical series' last close.
-- A scripted feed outage never actually ended — the tick counter froze
-  while an outage was active, so the "pending tick" could never reach the
-  outage's end boundary. Fixed by always advancing the tick, and having
-  the outage window govern only whether *that specific* poll throws.
+1. **Live/historical price discontinuity.** The live-quote walk and the
+   historical-bars walk used independent random-walk anchors, so a
+   freshly-watched symbol's first live quote could land tens of percent
+   away from its own seeded "previous close" — a fabricated 40+
+   standard-deviation price signal before any real movement occurred.
+   Fixed by anchoring the live walk to the historical series' last close.
+2. **A gap could never be observed.** `dayOpen` was always set equal to
+   `prevClose` by construction, and `gap = (dayOpen − prevClose) /
+   prevClose` is definitionally zero when they're equal — so a scripted
+   "gap" event moved the closing price but was structurally invisible to
+   the gap *signal*. Fixed by applying gap events to `dayOpen`
+   independently of the closing-price walk.
+3. **A feed outage never actually ended.** The tick counter froze while an
+   outage was active, so the "pending tick" checked against the outage
+   window could never advance past its start and reach the end boundary —
+   once triggered, the outage was permanent. Fixed by always advancing the
+   tick; the outage window now only governs whether *that specific* poll
+   throws.
+4. **A "4x volume surge" wasn't actually 4x anything real.** The live
+   walk's volume baseline and the historical walk's volume baseline were
+   keyed by different symbol strings (`"DEMO"` vs `"DEMO:daily"`), so they
+   were independent random values — a scripted multiplier was relative to
+   the wrong number. Fixed by sharing one baseline anchor across both
+   namespaces.
+5. **The subtlest one: a split's date used the wrong unit entirely.**
+   `getDailyBars` placed each bar by counting *calendar days* backward from
+   today; `getSplits` placed the split by multiplying its tick by
+   `tickIntervalMs` — a *live-quote-cadence* unit (seconds). A split
+   scripted at "day 150" landed at a date roughly 25 minutes in the future
+   relative to the bars, so numerically every bar's date came before the
+   split's date, and every bar — including ones long after the real split
+   point — got the split's adjustment applied. Price/volatility tests
+   still passed, because a uniform scale factor cancels out in a
+   day-over-day *return* ratio; only an *absolute* value (20-day average
+   volume, inflated 4x for a 4-for-1 split) exposed it. Fixed by extracting
+   one shared tick→date function (`dailyTickToDate`) that both methods now
+   call, so the two can't drift apart again by construction.
 
-Both are covered by regression tests
-(`lib/providers/__tests__/replay.test.ts`).
+All five are covered by regression tests
+(`lib/providers/__tests__/replay.test.ts`,
+`lib/demo/__tests__/scenario.test.ts`).
 
 **Other resilience properties, all tested:**
 

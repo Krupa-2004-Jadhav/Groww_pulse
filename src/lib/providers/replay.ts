@@ -51,12 +51,17 @@ function stepReturn(seed: string, symbol: string, tick: number): number {
   return (seededUnit(`${seed}:${symbol}:step:${tick}`) - 0.5) * 2 * STEP_VOLATILITY;
 }
 
+/** Strips the ":daily" suffix so the live and historical-bars namespaces share the same baseline anchors (price has its own explicit anchor via liveAnchor(); volume's baseline needs this too, or a scripted "Nx surge" isn't actually N times the stored 20-day average — caught live, not assumed). */
+function baseKey(symbol: string): string {
+  return symbol.endsWith(":daily") ? symbol.slice(0, -":daily".length) : symbol;
+}
+
 function basePrice(seed: string, symbol: string): number {
   return BASE_PRICE_MIN + seededUnit(`${seed}:${symbol}:base`) * BASE_PRICE_RANGE;
 }
 
 function baseVolume(seed: string, symbol: string): number {
-  return 500_000 + seededUnit(`${seed}:${symbol}:vol`) * 4_500_000;
+  return 500_000 + seededUnit(`${seed}:${baseKey(symbol)}:vol`) * 4_500_000;
 }
 
 function round2(n: number): number {
@@ -219,23 +224,41 @@ export class ReplayProvider implements MarketDataProvider, HistoricalDataProvide
   // Uses a separate namespace (`${symbol}:daily`) from the live-quote walk
   // above so seeding history and polling live quotes never share state.
 
+  /**
+   * The daily-bar walk's tick -> calendar-date mapping, as its own method
+   * so getDailyBars and getSplits can't drift apart. They used to compute
+   * dates two different ways: getDailyBars counted calendar days backward
+   * from "today," while getSplits multiplied the tick by `tickIntervalMs`
+   * (a live-quote-cadence unit — seconds, not days). A split scripted at
+   * "day 150" landed at a date maybe 25 minutes in the future relative to
+   * the bars, meaning EVERY bar's date was numerically before the split's
+   * date and got adjusted — uniformly inflating stored volume by
+   * `1/ratio` (4x for a 4-for-1 split) even for bars long after the real
+   * split point. Price/returns happened to look fine because a uniform
+   * scale factor cancels out in a ratio — only absolute values (volume)
+   * exposed it. Caught live, not assumed.
+   */
+  private dailyTickToDate(tick: number, outputsize = DEFAULT_DAILY_OUTPUTSIZE): Date {
+    const daysAgo = outputsize - 1 - tick;
+    const date = new Date(this.startTime);
+    date.setUTCDate(date.getUTCDate() - daysAgo);
+    date.setUTCHours(0, 0, 0, 0);
+    return date;
+  }
+
   async getDailyBars(symbol: string, outputsize = DEFAULT_DAILY_OUTPUTSIZE): Promise<HistoricalBar[]> {
     const key = `${symbol}:daily`;
     const bars: HistoricalBar[] = [];
-    const today = new Date(this.startTime);
 
     // Oldest first: tick 0 is `outputsize - 1` calendar days ago.
     for (let daysAgo = outputsize - 1; daysAgo >= 0; daysAgo--) {
       const tick = outputsize - 1 - daysAgo;
       const price = this.priceAtTick(key, tick);
       const prevPrice = tick === 0 ? price : this.priceAtTick(key, tick - 1);
-      const date = new Date(today);
-      date.setUTCDate(date.getUTCDate() - daysAgo);
-      date.setUTCHours(0, 0, 0, 0);
 
       bars.push({
         symbol,
-        date,
+        date: this.dailyTickToDate(tick, outputsize),
         open: round2(prevPrice),
         high: round2(Math.max(price, prevPrice) * 1.004),
         low: round2(Math.min(price, prevPrice) * 0.996),
@@ -253,7 +276,7 @@ export class ReplayProvider implements MarketDataProvider, HistoricalDataProvide
       .filter((e): e is Extract<ScriptedEvent, { type: "split" }> => e.type === "split" && e.symbol === key)
       .map((e) => ({
         symbol,
-        date: new Date(this.startTime + e.atTick * this.tickIntervalMs),
+        date: this.dailyTickToDate(e.atTick),
         fromFactor: e.fromFactor,
         toFactor: e.toFactor,
         description: `${e.fromFactor}-for-${e.toFactor} split (simulated)`,
