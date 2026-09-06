@@ -15,7 +15,8 @@ export function week52BreakSignal(input: Week52BreakInput): Signal | null {
 
   if (price >= high52w) {
     return {
-      category: "relative",
+      // plan §5 WEIGHTS comment: "event: 0.20 // event covers filing / 52w / gap"
+      category: "event",
       type: "week52_break",
       subScore: BINARY_SUB_SCORE,
       tier: tierFromSubScore(BINARY_SUB_SCORE),
@@ -26,7 +27,8 @@ export function week52BreakSignal(input: Week52BreakInput): Signal | null {
 
   if (price <= low52w) {
     return {
-      category: "relative",
+      // plan §5 WEIGHTS comment: "event: 0.20 // event covers filing / 52w / gap"
+      category: "event",
       type: "week52_break",
       subScore: BINARY_SUB_SCORE,
       tier: tierFromSubScore(BINARY_SUB_SCORE),

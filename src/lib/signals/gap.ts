@@ -1,4 +1,5 @@
 import { Signal, subScoreFromZ, tierFromSubScore } from "./types";
+import { MIN_VOLATILITY } from "@/lib/stats/math";
 
 const THRESHOLD_Z = 1.0;
 
@@ -15,7 +16,8 @@ export function gapSignal(input: GapInput): Signal | null {
   if (prevClose <= 0) return null;
 
   const gapReturn = (dayOpen - prevClose) / prevClose;
-  const z = gapReturn / vol20d;
+  const safeVol20d = Math.max(MIN_VOLATILITY, vol20d);
+  const z = gapReturn / safeVol20d;
   const absZ = Math.abs(z);
 
   if (absZ < THRESHOLD_Z) return null;
@@ -24,7 +26,8 @@ export function gapSignal(input: GapInput): Signal | null {
   const direction = gapReturn >= 0 ? "up" : "down";
 
   return {
-    category: "price",
+    // plan §5 WEIGHTS comment: "event: 0.20 // event covers filing / 52w / gap"
+    category: "event",
     type: "gap",
     zscore: z,
     subScore,

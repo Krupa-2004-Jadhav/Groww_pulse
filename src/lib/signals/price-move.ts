@@ -1,4 +1,5 @@
 import { Signal, subScoreFromZ, tierFromSubScore } from "./types";
+import { MIN_VOLATILITY } from "@/lib/stats/math";
 
 const THRESHOLD_Z = 1.0;
 
@@ -28,7 +29,11 @@ export function priceMoveSignal(input: PriceMoveInput): Signal | null {
   const { symbol, actualReturn, indexReturn, beta, vol20d, windowTradingDays, windowLabel } = input;
 
   const residual = actualReturn - beta * indexReturn;
-  const windowVol = vol20d * Math.sqrt(Math.max(1, windowTradingDays));
+  // Defense in depth: rollup.ts already floors vol_20d before storing it,
+  // but this function floors again rather than trusting every caller —
+  // a zero/negative vol20d must never reach a division below.
+  const safeVol20d = Math.max(MIN_VOLATILITY, vol20d);
+  const windowVol = safeVol20d * Math.sqrt(Math.max(1, windowTradingDays));
   const z = residual / windowVol;
   const absZ = Math.abs(z);
 
