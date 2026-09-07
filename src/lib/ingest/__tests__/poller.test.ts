@@ -8,15 +8,32 @@ function uniqueSymbol(prefix: string) {
   return `${prefix}${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
 }
 
+/**
+ * `getQuotes` is called with `getWatchedSymbols()`'s result — by design,
+ * the union of EVERY symbol watched across the whole (shared) database,
+ * not just this test's own fixtures (that's the actual "materiality once
+ * per symbol" behavior these tests exist to verify). A provider that
+ * blindly echoes a price back for any symbol it's asked about — as an
+ * earlier version of this fixture did — will therefore also write bogus
+ * quotes for whatever real symbols happen to be on a real watchlist in
+ * the shared dev.db at test time (caught live: a full `npx vitest run`
+ * overwrote AAPL's real quote with a fake $42 "recording"-sourced one).
+ * A real provider only returns data for symbols it actually recognizes;
+ * this fixture now does the same, only ever answering for symbols it was
+ * explicitly told about — never a blanket echo.
+ */
 class RecordingProvider implements MarketDataProvider {
   readonly name = "recording";
   calls: string[][] = [];
   private failNext = false;
-
-  constructor(private readonly priceFor: (symbol: string) => number = () => 100) {}
+  private readonly knownPrices = new Map<string, number>();
 
   failNextCall() {
     this.failNext = true;
+  }
+
+  setPrice(symbol: string, price: number) {
+    this.knownPrices.set(symbol, price);
   }
 
   async getQuotes(symbols: string[]): Promise<Quote[]> {
@@ -25,12 +42,14 @@ class RecordingProvider implements MarketDataProvider {
       this.failNext = false;
       throw new ProviderRateLimitError(this.name, 1000);
     }
-    return symbols.map((symbol) => ({
-      symbol,
-      price: this.priceFor(symbol),
-      asOf: new Date(),
-      source: this.name,
-    }));
+    return symbols
+      .filter((symbol) => this.knownPrices.has(symbol))
+      .map((symbol) => ({
+        symbol,
+        price: this.knownPrices.get(symbol)!,
+        asOf: new Date(),
+        source: this.name,
+      }));
   }
 }
 
@@ -65,6 +84,7 @@ describe("IngestPoller (Phase 2, Test Gate 2)", () => {
 
   it("only requests the union of watched symbols — never an unwatched one", async () => {
     const provider = new RecordingProvider();
+    provider.setPrice(watched, 100);
     const poller = new IngestPoller(provider);
 
     await poller.pollOnce();
@@ -75,7 +95,8 @@ describe("IngestPoller (Phase 2, Test Gate 2)", () => {
   });
 
   it("a provider failure marks the ingest health as failing without losing the last good quote", async () => {
-    const provider = new RecordingProvider(() => 42);
+    const provider = new RecordingProvider();
+    provider.setPrice(watched, 42);
     const poller = new IngestPoller(provider);
 
     await poller.pollOnce(); // succeeds, writes price 42
