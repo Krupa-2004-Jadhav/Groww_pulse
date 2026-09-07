@@ -32,7 +32,7 @@ export function StockDetailHeader({ detail, watchlistId }: { detail: SymbolDetai
       {/* Header stats: row on desktop, 2x2 grid on mobile (spec §6). */}
       <div className="mt-4 grid grid-cols-2 gap-3 sm:flex sm:flex-row sm:gap-8">
         <div>
-          <div className="text-xs text-zinc-400">Price</div>
+          <div className="text-xs text-zinc-400">Price{detail.quote && !detail.quote.live ? " (last close)" : ""}</div>
           <div className="text-2xl font-bold text-zinc-900 sm:text-3xl">
             {detail.quote ? detail.quote.price.toFixed(2) : "—"}
           </div>

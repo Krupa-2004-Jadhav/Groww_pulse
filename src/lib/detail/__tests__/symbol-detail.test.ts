@@ -176,11 +176,16 @@ describe("getSymbolDetail (Stock Detail screen, Test Gate)", () => {
     expect(detail!.events.some((e) => e.seq === eventId)).toBe(false);
   });
 
-  it("a symbol with no live quote yet still returns a shaped response with null quote/freshness", async () => {
+  it("a symbol with no live quote yet falls back to the last daily close, marked non-live, rather than leaving the header blank", async () => {
     await prisma.quoteLatest.deleteMany({ where: { symbol } });
     const detail = await getSymbolDetail(symbol, watchlistId, userId);
     expect(detail).not.toBeNull();
-    expect(detail!.quote).toBeNull();
+    expect(detail!.quote).not.toBeNull();
+    expect(detail!.quote!.live).toBe(false);
+    expect(detail!.quote!.price).toBeGreaterThan(0);
+    // freshness.price tracks the live quote feed specifically — still null,
+    // since there genuinely isn't a live quote, even though quote itself
+    // now has a (non-live) fallback value.
     expect(detail!.freshness.price).toBeNull();
   });
 });

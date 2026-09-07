@@ -36,6 +36,7 @@ export interface SymbolDetail {
     dayChange: number | null;
     dayChangePct: number | null;
     asOf: string;
+    live: boolean;
   } | null;
   stats: {
     high52w: number | null;

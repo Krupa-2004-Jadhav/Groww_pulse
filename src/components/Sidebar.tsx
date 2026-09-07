@@ -48,7 +48,6 @@ export function Sidebar({
       <div className="flex items-center justify-between">
         <h1 className="text-sm font-bold tracking-tight text-zinc-900">Pulse</h1>
       </div>
-      <p className="mt-0.5 text-xs text-zinc-400">Since You Left</p>
 
       <div className="mt-6 flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Watchlists</h2>

@@ -37,6 +37,8 @@ export interface SymbolDetail {
     dayChange: number | null;
     dayChangePct: number | null;
     asOf: string;
+    /** false when there's no live quotes_latest row yet (just added, or mid poll-gap) and this is a fallback built from the last daily close instead. */
+    live: boolean;
   } | null;
   stats: {
     high52w: number | null;
@@ -147,6 +149,23 @@ export async function getSymbolDetail(symbol: string, watchlistId: string, userI
 
   const result = attentionScore(signals);
 
+  // No live quote yet (symbol just added, or mid poll-gap) — bars_daily is
+  // seeded synchronously at add-time, so fall back to the last daily close
+  // rather than leaving the header blank while the chart already has data.
+  const lastBar = windowBars[windowBars.length - 1] ?? null;
+  const prevBar = windowBars[windowBars.length - 2] ?? null;
+  const fallbackQuote =
+    !quote && lastBar
+      ? {
+          price: round2(lastBar.close),
+          prevClose: prevBar ? round2(prevBar.close) : null,
+          dayChange: prevBar ? round2(lastBar.close - prevBar.close) : null,
+          dayChangePct: prevBar && prevBar.close ? round2(((lastBar.close - prevBar.close) / prevBar.close) * 100) : null,
+          asOf: lastBar.date.toISOString(),
+          live: false,
+        }
+      : null;
+
   return {
     symbol: instrument.symbol,
     name: instrument.name,
@@ -158,8 +177,9 @@ export async function getSymbolDetail(symbol: string, watchlistId: string, userI
           dayChange: quote.prevClose != null ? round2(quote.price - quote.prevClose) : null,
           dayChangePct: quote.prevClose ? round2(((quote.price - quote.prevClose) / quote.prevClose) * 100) : null,
           asOf: quote.asOf.toISOString(),
+          live: true,
         }
-      : null,
+      : fallbackQuote,
     stats: stats
       ? { high52w: stats.high52w, low52w: stats.low52w, vol20d: stats.vol20d, avgVolume20d: stats.avgVolume20d, beta: stats.beta }
       : null,

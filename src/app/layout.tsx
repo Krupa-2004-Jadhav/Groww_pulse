@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Pulse — Since You Left",
+  title: "Pulse",
   description: "A watchlist that tells you what changed, why it matters, and what to look at first.",
 };
 
