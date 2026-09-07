@@ -1,4 +1,4 @@
-# Pulse — "Since You Left" Market Watchlist
+# Pulse — Market Watchlist
 
 Built from a 72-hour build spec structured as 10 phases, each with its own
 test gate. This README is the graded narrative the plan asks for (§6.5) —
