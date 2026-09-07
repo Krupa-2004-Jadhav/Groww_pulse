@@ -23,13 +23,29 @@ export interface TickResult {
  * every 10s would be ~5000x more work than the data justifies.
  * Symbol-centric by construction — this
  * loop runs once per unique watched symbol, never once per user/watchlist.
+ *
+ * `reconcileOpenEvents` is deliberately gated on `updateStats` having
+ * actually recomputed (`didRecompute`), not called unconditionally every
+ * tick. Phase 6's hysteresis requires a condition to read "clear" on 2
+ * *consecutive passes* before resolving — the whole point is to require
+ * genuine separation in time. If reconciliation ran on every 10s poll
+ * regardless of whether the underlying stats were fresh, two ticks 10
+ * seconds apart could take an event from clear_streak=0 to resolved,
+ * because both "passes" would be judging the same frozen baseline rather
+ * than two independent looks at the data. Signal emission is NOT gated
+ * the same way — a genuinely new price move should be caught as soon as
+ * the next quote lands, and vol_20d/avg_volume_20d/high_52w/low_52w are
+ * valid all day regardless of when they were last recomputed, so staleness
+ * doesn't compromise detection, only "how many independent times has this
+ * been re-checked."
  */
 export async function runEvaluationTick(now: Date = new Date()): Promise<TickResult> {
   const watched = await prisma.watchlistItem.findMany({ select: { symbol: true }, distinct: ["symbol"] });
   const symbols = Array.from(new Set([...watched.map((w) => w.symbol), MARKET_INDEX_SYMBOL]));
 
+  const didRecompute = new Map<string, boolean>();
   for (const symbol of symbols) {
-    await updateStats(symbol, { now }); // internally throttled — see rollup.ts's staleness guard
+    didRecompute.set(symbol, await updateStats(symbol, { now })); // internally throttled — see rollup.ts's staleness guard
   }
 
   let eventsEmitted = 0;
@@ -42,7 +58,9 @@ export async function runEvaluationTick(now: Date = new Date()): Promise<TickRes
       eventsEmitted += results.filter((r) => r.inserted).length;
     }
 
-    await reconcileOpenEvents(symbol, signals);
+    if (didRecompute.get(symbol)) {
+      await reconcileOpenEvents(symbol, signals);
+    }
   }
 
   return { symbolsEvaluated: symbols.length, eventsEmitted };

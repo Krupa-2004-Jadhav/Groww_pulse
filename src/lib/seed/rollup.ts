@@ -56,19 +56,27 @@ async function loadAdjustedBars(symbol: string): Promise<AdjustedBar[]> {
  * `force` bypasses the staleness guard — used by tests and by a genuine
  * one-shot "recompute now" call (e.g. right after seeding new history),
  * where skipping would leave symbol_stats absent instead of freshly wrong.
+ *
+ * Returns whether it actually recomputed. This matters beyond an internal
+ * detail: Phase 6's hysteresis (`reconcileOpenEvents`) requires a
+ * condition to read "clear" on 2 *consecutive passes* before resolving an
+ * event, where a "pass" is meant to be an independent look at the data —
+ * not two reads of one cached row taken 10 seconds apart. The caller
+ * (`lib/pipeline/tick.ts`) uses this return value to only reconcile when a
+ * pass was genuine, which is what makes "consecutive" mean something.
  */
-export async function updateStats(symbol: string, opts: { now?: Date; force?: boolean } = {}): Promise<void> {
+export async function updateStats(symbol: string, opts: { now?: Date; force?: boolean } = {}): Promise<boolean> {
   const now = opts.now ?? new Date();
 
   if (!opts.force) {
     const existing = await prisma.symbolStats.findUnique({ where: { symbol }, select: { updatedAt: true } });
     if (existing && now.getTime() - existing.updatedAt.getTime() < STATS_REFRESH_INTERVAL_MS) {
-      return; // still fresh — bars_daily can't have changed meaningfully since the last recompute
+      return false; // still fresh — bars_daily can't have changed meaningfully since the last recompute
     }
   }
 
   const bars = await loadAdjustedBars(symbol);
-  if (bars.length < 2) return; // not enough history yet — leave stats absent rather than fabricate them
+  if (bars.length < 2) return false; // not enough history yet — leave stats absent rather than fabricate them
 
   const closes = bars.map((b) => b.close);
   const volumes = bars.map((b) => b.volume);
@@ -94,6 +102,8 @@ export async function updateStats(symbol: string, opts: { now?: Date; force?: bo
     create: { symbol, vol20d, avgVolume20d, high52w, low52w, beta: betaValue, updatedAt: now },
     update: { vol20d, avgVolume20d, high52w, low52w, beta: betaValue, updatedAt: now },
   });
+
+  return true;
 }
 
 async function computeSymbolBeta(symbol: string, returns: number[]): Promise<number | null> {
