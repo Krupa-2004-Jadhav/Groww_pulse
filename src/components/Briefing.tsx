@@ -93,7 +93,7 @@ export function Briefing({ watchlistId, userId }: { watchlistId: string; userId:
           <p className="text-sm text-zinc-500">This watchlist is empty.</p>
           <button
             onClick={() => setAddingSymbol(true)}
-            className="mt-3 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700"
+            className="mt-3 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-dark"
           >
             Add your first stock
           </button>
@@ -111,24 +111,39 @@ export function Briefing({ watchlistId, userId }: { watchlistId: string; userId:
       {quietSymbols.length > 0 && (
         <section className="mt-8">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">No meaningful change</h2>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-2 space-y-2">
             {quietSymbols.map((symbol) => (
-              <span
+              <div
                 key={symbol}
-                className="group inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-500"
+                className="group relative rounded-xl border border-zinc-200 bg-zinc-50 p-3 transition hover:border-zinc-300 hover:bg-white"
               >
-                <Link href={`/stocks/${symbol}?watchlistId=${watchlistId}`} className="hover:text-zinc-900">
-                  {symbol}
-                </Link>
-                <button
-                  onClick={() => removeSymbol.mutate(symbol)}
-                  className="text-zinc-300 opacity-0 hover:text-zinc-600 group-hover:opacity-100"
-                  aria-label={`Remove ${symbol}`}
-                  title="Remove from watchlist"
-                >
-                  ✕
-                </button>
-              </span>
+                <Link
+                  href={`/stocks/${symbol}?watchlistId=${watchlistId}`}
+                  className="absolute inset-0 z-0"
+                  aria-label={`View ${symbol}`}
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-2 w-2 rounded-full bg-zinc-300" aria-hidden />
+                    <span className="text-sm font-semibold text-zinc-700">{symbol}</span>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      removeSymbol.mutate(symbol);
+                    }}
+                    className="relative z-10 text-zinc-300 opacity-0 hover:text-zinc-600 group-hover:opacity-100"
+                    aria-label={`Remove ${symbol}`}
+                    title="Remove from watchlist"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p className="pointer-events-none relative z-10 mt-1 text-xs text-zinc-400">
+                  No meaningful change since your last visit.
+                </p>
+              </div>
             ))}
           </div>
         </section>

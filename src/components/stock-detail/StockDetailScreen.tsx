@@ -68,7 +68,7 @@ export function StockDetailScreen({ symbol, watchlistId, userId }: { symbol: str
             <button
               onClick={markAllReviewed}
               disabled={acknowledge.isPending}
-              className="min-h-11 rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
+              className="min-h-11 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50"
             >
               Mark reviewed
             </button>

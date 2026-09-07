@@ -65,9 +65,9 @@ export function Sidebar({
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
             placeholder="Watchlist name"
-            className="w-full rounded-md border border-zinc-200 px-2 py-1 text-xs outline-none focus:border-zinc-400"
+            className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-900 placeholder-zinc-400 outline-none focus:border-brand"
           />
-          <button onClick={submit} className="rounded-md bg-zinc-900 px-2 text-xs text-white">
+          <button onClick={submit} className="rounded-md bg-brand px-2 text-xs text-white hover:bg-brand-dark">
             Add
           </button>
         </div>
@@ -83,7 +83,7 @@ export function Sidebar({
             key={wl.id}
             onClick={() => onSelect(wl.id)}
             className={`rounded-md px-2 py-1.5 text-left text-sm ${
-              selectedId === wl.id ? "bg-zinc-100 font-medium text-zinc-900" : "text-zinc-600 hover:bg-zinc-50"
+              selectedId === wl.id ? "bg-brand/10 font-medium text-brand-dark" : "text-zinc-600 hover:bg-zinc-50"
             }`}
           >
             {wl.name}

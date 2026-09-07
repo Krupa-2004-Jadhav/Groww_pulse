@@ -26,7 +26,7 @@ export function AddSymbolDialog({ watchlistId, onClose }: { watchlistId: string;
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by symbol or company name…"
-          className="mt-3 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-brand"
         />
 
         <div className="mt-3 max-h-72 overflow-y-auto">
@@ -46,7 +46,7 @@ export function AddSymbolDialog({ watchlistId, onClose }: { watchlistId: string;
                 <button
                   onClick={() => addSymbol.mutate({ symbol: r.symbol, name: r.name, exchange: r.exchange })}
                   disabled={addSymbol.isPending}
-                  className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
+                  className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-dark disabled:opacity-50"
                 >
                   Add
                 </button>
