@@ -47,3 +47,6 @@ CLAUDE.md
 # prisma
 /prisma/*.db
 /prisma/*.db-journal
+
+# planning docs — kept locally as reference, not meant for the repo
+*.pdf

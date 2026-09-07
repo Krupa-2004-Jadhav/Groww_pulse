@@ -1,9 +1,9 @@
 # Pulse — "Since You Left" Market Watchlist
 
-Built from [`Pulse_Implementation_Plan.pdf`](Pulse_Implementation_Plan.pdf), a
-72-hour build spec structured as 10 phases, each with its own test gate. This
-README is the graded narrative the plan asks for (§6.5) — it explains what
-was built, the decisions behind it, and what's honestly still missing.
+Built from a 72-hour build spec structured as 10 phases, each with its own
+test gate. This README is the graded narrative the plan asks for (§6.5) —
+it explains what was built, the decisions behind it, and what's honestly
+still missing.
 
 The product answers one question: *"I was away — what meaningfully changed
 in my watchlist, why does it matter, and what should I look at first?"* Not
