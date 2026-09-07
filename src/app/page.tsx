@@ -1,19 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useCurrentUser, useWatchlists } from "@/lib/client/hooks";
 import { Sidebar } from "@/components/Sidebar";
 import { Briefing } from "@/components/Briefing";
 
-export default function Home() {
+function HomeContent() {
   const { data: me, isLoading: userLoading } = useCurrentUser();
   const { data: watchlistsData } = useWatchlists(me?.userId);
   const [explicitSelectedId, setExplicitSelectedId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const requestedWatchlistId = searchParams.get("watchlist"); // set by the stock detail page's "Back to briefing" link
 
   // First-time convenience: land on the first watchlist automatically, but
-  // let an explicit user pick override it — derived, not effect-driven, so
-  // there's no extra render cascade.
-  const selectedId = explicitSelectedId ?? watchlistsData?.watchlists[0]?.id ?? null;
+  // let an explicit user pick (or an incoming ?watchlist= link) override it
+  // — derived, not effect-driven, so there's no extra render cascade.
+  const selectedId = explicitSelectedId ?? requestedWatchlistId ?? watchlistsData?.watchlists[0]?.id ?? null;
 
   if (userLoading || !me) {
     return <div className="flex flex-1 items-center justify-center text-sm text-zinc-400">Loading…</div>;
@@ -35,5 +38,13 @@ export default function Home() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-zinc-400">Loading…</div>}>
+      <HomeContent />
+    </Suspense>
   );
 }

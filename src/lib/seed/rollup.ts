@@ -19,13 +19,19 @@ export const MARKET_INDEX_SYMBOL = process.env.MARKET_INDEX_SYMBOL ?? "SPY";
 // smaller, more localized change for the same effect.
 const STATS_REFRESH_INTERVAL_MS = 15 * 60_000;
 
-interface AdjustedBar {
+export interface AdjustedBar {
   date: Date;
   close: number;
   volume: number;
 }
 
-async function loadAdjustedBars(symbol: string): Promise<AdjustedBar[]> {
+/**
+ * Exported for reuse (e.g. the stock detail screen's price/volume charts)
+ * rather than having other callers re-query bars_daily and re-derive the
+ * same split adjustment themselves — one place computes "what actually
+ * happened," everything else reads it.
+ */
+export async function loadAdjustedBars(symbol: string): Promise<AdjustedBar[]> {
   const bars = await prisma.barDaily.findMany({
     where: { symbol },
     orderBy: { barDate: "asc" },

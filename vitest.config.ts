@@ -1,7 +1,9 @@
 import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
 import path from "path";
 
 export default defineConfig({
+  plugins: [react()],
   test: {
     environment: "node",
     globals: false,
@@ -14,6 +16,11 @@ export default defineConfig({
     // already run sequentially by default; this just extends that across
     // files too. Documented tradeoff, not a workaround for a real bug.
     fileParallelism: false,
+    // Most tests are plain Node (DB integration, pure functions) and stay
+    // on the default "node" environment above. A handful of React
+    // component tests need a DOM — rather than paying jsdom's setup cost
+    // globally, those files opt in individually via a
+    // `/** @vitest-environment jsdom */` docblock at the top of the file.
   },
   resolve: {
     alias: {

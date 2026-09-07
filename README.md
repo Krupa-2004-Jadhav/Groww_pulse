@@ -16,7 +16,7 @@ engine that ranks stocks by how much they genuinely deserve attention.
 npm install
 npx prisma migrate deploy   # schema is already migrated in prisma/migrations
 npm run dev                 # starts the app AND the background ingest/evaluation pipeline
-npm test                    # 118 tests, all phases
+npm test                    # 140 tests, all phases
 ```
 
 Open `http://localhost:3000`. `MARKET_PROVIDER` defaults to `replay`
@@ -234,11 +234,11 @@ A stated cut reads as judgment; an unstated gap reads as failure.
 |---|---|
 | Auth / login | Out of scope for a 72-hour build focused on the change-detection engine. The schema still models multi-user watchlists and per-user read-state correctly (`users`, `read_state` keyed by `(userId, watchlistId)`) — there's just one resolved "demo user" (`lib/demo-user.ts`) instead of a login flow. |
 | Trading / order placement | Not the product. Explicitly an information & monitoring tool (plan §8) — no buy/sell language anywhere in the codebase. |
-| Charts / technical indicators | Would compete with the actual differentiator (the change briefing) for screen space and engineering time. |
+| Deep chart interactivity (custom hover popovers, tap bottom-sheets, expandable signal rows, volume-bar-to-event-marker click-linking) | The stock detail screen (below) does have real Recharts price/volume charts and a highlight-worthy `AttentionStat` treatment — that much was in scope. What's cut is the *polish layer* on top: native Recharts tooltips instead of custom popover/bottom-sheet components, signal rows shown flat instead of expandable, no click-to-jump between a volume spike and its event marker. Building custom popover/bottom-sheet primitives would also have been the first non-lean UI pattern in an app that's deliberately simple everywhere else (StoryCard has no component library) — inconsistent payoff for a screen secondary to the race-safety/scoring engine that's the actual differentiator. |
 | Filing/earnings signal wired into the live pipeline | The pure signal function and its tests exist (`lib/signals/filing-event.ts`), sourced deterministically from `/earnings`, `/splits`, `/dividends` with no NLP. Wiring live earnings/dividend data into a stored, queryable events table (so the pipeline can compute it automatically) was cut for time. The "event" weight category isn't empty without it — `week52_break` and `gap` both live there too. |
 | WebSockets / streaming | Twelve Data's streaming tier is paid-only, and a "since you left" product doesn't need sub-second latency by design (plan §1). REST polling, cadence-adjusted to market hours. The `MarketDataProvider` interface means a streaming provider could slot in behind it later without touching business logic. |
 | Kafka / Redis / Kubernetes / microservices | One process, one database. At this scale (a handful of symbols, one poller), the added operational surface of a queue or a cache would cost more than it returns. Explicitly penalized by over-engineering (plan §6.4) if built anyway. |
-| A separate test database | DB-touching tests share the dev SQLite file with uniquely-generated fixture symbols per test, cleaned up per test, rather than a dedicated test DB. Running test *files* in parallel against that shared file produced intermittent lock/FK errors under load, so `vitest.config.ts` sets `fileParallelism: false` — tests within a file already ran sequentially; this just extends that guarantee across files. A dedicated test DB would remove the constraint; not worth the setup at this project's size. |
+| A separate test database | DB-touching tests share the dev SQLite file with uniquely-generated fixture symbols per test, cleaned up per test, rather than a dedicated test DB. Running test *files* in parallel against that shared file produced intermittent lock/FK errors under load, so `vitest.config.ts` sets `fileParallelism: false` — tests within a file already ran sequentially; this just extends that guarantee across files. **A real cost of this tradeoff surfaced during development, not just a theoretical one:** several test fixtures reference `MARKET_INDEX_SYMBOL` ("SPY") directly and clean up its `bars_daily` rows in `afterEach` — which, sharing the same dev.db, silently deleted the demo watchlist's *real* SPY history between sessions. Fixed the resulting symptom (`lib/demo/scenario.ts`'s seeding gate was scoped to the wrong symbol and skipped reseeding SPY when only SPY was missing), but the underlying shared-DB contamination risk is inherent to this tradeoff, not eliminated by that fix. A dedicated test DB would remove it entirely; still not worth the setup at this project's size. |
 | Fastify + Vite (the plan's suggested stack) | Next.js App Router already does what Fastify was chosen for (typed routes, minimal, boring) and doubles as the frontend host — "one deployable" was achieved without adding a second framework. |
 
 ## What breaks first at 100× — and what I'd do
@@ -400,25 +400,70 @@ All five are covered by regression tests
 - Concurrent duplicate watchlist-symbol adds and concurrent reorders of
   different items are both race-safe — `lib/watchlists/__tests__/crud.test.ts`.
 
+## Stock detail screen
+
+`/stocks/:symbol?watchlistId=...` — what renders when you click a stock in
+the briefing feed (`StoryCard` now links here directly; the older
+`StoryDrawer` quick-view is retired, superseded by this fuller screen).
+Backed by one endpoint, `GET /api/symbols/:symbol/detail`
+(`lib/detail/symbol-detail.ts`), which returns everything the screen needs
+in a single response by **reusing already-computed backend data rather
+than re-deriving any of it**: `bars_daily` (via the same split-adjustment
+`rollup.ts` uses for stats), `symbol_stats`, `computeCurrentSignals`
+(Phase 4), `attentionScore` (Phase 5), and `getChanges` (Phase 7's
+watermark/ack/resolution filters, applied per-symbol) — a genuinely new
+computation only for the benchmark line, normalized to start at the same
+value as the stock's own line so the two are visually comparable without a
+second axis.
+
+**A deliberate scoping choice on the events shown:** the chart's event
+markers reuse the exact same filters the briefing feed applies —
+unresolved, unacknowledged by this user, past the watchlist item's
+`seed_watermark` — not a full historical log. A 6-month chart dotted with
+every event that ever fired, most already dealt with, would contradict the
+product's whole premise (surfacing what still deserves attention, not
+everything that ever happened). This does mean an already-acknowledged
+event vanishes from the chart, not just the feed — stated here as an
+explicit consequence, not a hidden one.
+
+`AttentionStat` (`components/AttentionStat.tsx`) is the one shared
+"does this number deserve your attention" treatment — a bordered, tinted
+stat card above a materiality threshold (`subScore >= 50`, derived from the
+same z=2 intuition the plan's signal table uses, applied as one consistent
+cutoff across signal types rather than a bespoke raw-metric threshold per
+type), plain body text below it. Direction (green/red/amber) is never
+color-only — every highlighted card pairs its color with an icon and a
+text label. Reused as-is by the signal breakdown panel; not restyled
+per-screen.
+
+**Deferred, documented in the scope-cut table below:** custom hover
+popovers and tap bottom-sheets (native Recharts tooltips instead),
+expandable signal rows (shown flat), and volume-spike-to-event-marker
+click-linking.
+
 ## Language & compliance
 
 Never "Buy / Sell / Strong Buy / target price / institutional buying."
 Tiers are "High/Medium/Low attention"; volume anomalies are "unusual
-activity," never attributed to a cause. `StoryDrawer.tsx` states outright:
-*"Information and monitoring only — this is not investment advice."*
-Grep the codebase for `buy|sell|target price` and the only matches are this
-README and the scope-cut table describing what's *not* there.
+activity," never attributed to a cause. `StockDetailScreen.tsx` states
+outright: *"Information and monitoring only — this is not investment
+advice."* Grep the codebase for `buy|sell|target price` and the only
+matches are this README and the scope-cut table describing what's *not*
+there.
 
 ## Tech stack
 
 TypeScript end-to-end · Next.js App Router (API + frontend, one
 deployable) · Prisma (SQLite locally, Postgres-portable — see "what breaks
-first") · Vitest (118 tests, `npm test`) · TanStack Query (polling,
-mutations) · Tailwind. `node-cron` was pulled in per the plan but the
-actual scheduling ended up living in `lib/pipeline/scheduler.ts` via
-`setTimeout`-based self-rescheduling (mirroring `IngestPoller`'s own
-pattern) rather than cron syntax, since the cadence is dynamic
-(market-hours-driven), not fixed-interval.
+first") · Vitest (140 tests, `npm test`; component tests opt into a jsdom
+environment per-file via a `@vitest-environment` docblock rather than
+paying that cost globally) · TanStack Query (polling, mutations) ·
+Recharts (price/volume charts) · lucide-react (icons) · Tailwind.
+`node-cron` was pulled in per the plan but the actual scheduling ended up
+living in `lib/pipeline/scheduler.ts` via `setTimeout`-based
+self-rescheduling (mirroring `IngestPoller`'s own pattern) rather than cron
+syntax, since the cadence is dynamic (market-hours-driven), not
+fixed-interval.
 
 ## Repo map
 
@@ -433,6 +478,8 @@ src/lib/watermark/     Phase 7 — the race-safe /changes + /ack core
 src/lib/watchlists/    Phase 8 — CRUD, race-safe add/reorder
 src/lib/pipeline/      Bridges Phases 1-8 into one running process
 src/lib/demo/          Phase 10 — the scripted, deterministic demo scenario
+src/lib/detail/        Stock detail screen's data-gathering endpoint logic
 src/app/api/           All HTTP routes
-src/components/, src/app/page.tsx   Phase 9 — the frontend
+src/components/, src/app/page.tsx           Phase 9 — the briefing frontend
+src/components/stock-detail/, src/app/stocks/[symbol]/   The stock detail screen
 ```

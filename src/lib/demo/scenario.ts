@@ -83,13 +83,18 @@ export async function runDemoScenario(): Promise<ScenarioResult> {
   ];
   const provider = new ReplayProvider({ seed: DEMO_SEED, script: scenarioScript });
 
-  // Only seed once — re-running the scenario against already-seeded history
-  // exercises the "never re-fetch what you already have" path too.
+  // seedSymbolHistory is already idempotent PER SYMBOL (Phase 3: "never
+  // re-fetch what you already have") — call it unconditionally for both
+  // rather than gating on DEMO_SYMBOL's bar count and assuming the index
+  // is seeded whenever DEMO is. That assumption broke in practice: the
+  // two can end up out of sync (e.g. something else — a test's cleanup
+  // touching the same MARKET_INDEX_SYMBOL name, or a partial prior run —
+  // clears one but not the other), and a gate scoped to the wrong symbol
+  // silently skips reseeding the one that's actually missing. Caught
+  // against the real dev database, not assumed.
   const alreadySeeded = (await prisma.barDaily.count({ where: { symbol: DEMO_SYMBOL } })) > 0;
-  if (!alreadySeeded) {
-    await seedSymbolHistory(DEMO_SYMBOL, provider);
-    await seedSymbolHistory(MARKET_INDEX_SYMBOL, provider);
-  }
+  await seedSymbolHistory(DEMO_SYMBOL, provider);
+  await seedSymbolHistory(MARKET_INDEX_SYMBOL, provider);
   steps.push({
     label: "Historical seed with a mid-history 4-for-1 split",
     detail: alreadySeeded

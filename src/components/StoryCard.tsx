@@ -1,17 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { Story } from "@/lib/scoring/group-into-stories";
 import { ChangeEvent } from "@/lib/client/api";
 import { TIER_META, directionArrow } from "./tier";
 
-export function StoryCard({ story, onOpen }: { story: Story<ChangeEvent>; onOpen: () => void }) {
+export function StoryCard({ story, href }: { story: Story<ChangeEvent>; href: string }) {
   const meta = TIER_META[story.tier];
   const arrow = directionArrow(story.reason);
 
   return (
-    <button
-      onClick={onOpen}
-      className="w-full rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition hover:border-zinc-300 hover:shadow"
+    <Link
+      href={href}
+      className="block w-full rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition hover:border-zinc-300 hover:shadow"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
@@ -35,6 +36,6 @@ export function StoryCard({ story, onOpen }: { story: Story<ChangeEvent>; onOpen
           {story.events.length} signal{story.events.length === 1 ? "" : "s"}
         </span>
       </div>
-    </button>
+    </Link>
   );
 }

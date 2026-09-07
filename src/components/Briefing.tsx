@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useChanges, useWatchlist, useAck, useHealth, useRemoveSymbol, useMarketSession } from "@/lib/client/hooks";
-import { groupIntoStories, Story } from "@/lib/scoring/group-into-stories";
-import { ChangeEvent } from "@/lib/client/api";
+import { groupIntoStories } from "@/lib/scoring/group-into-stories";
 import { formatLastSeen } from "@/lib/client/format";
 import { StoryCard } from "./StoryCard";
-import { StoryDrawer } from "./StoryDrawer";
 import { AddSymbolDialog } from "./AddSymbolDialog";
 
 export function Briefing({ watchlistId, userId }: { watchlistId: string; userId: string }) {
@@ -17,7 +16,6 @@ export function Briefing({ watchlistId, userId }: { watchlistId: string; userId:
   const ack = useAck(watchlistId, userId);
   const removeSymbol = useRemoveSymbol(watchlistId);
 
-  const [openStory, setOpenStory] = useState<Story<ChangeEvent> | null>(null);
   const [addingSymbol, setAddingSymbol] = useState(false);
   const ackedCursor = useRef<number | null>(null);
 
@@ -105,7 +103,7 @@ export function Briefing({ watchlistId, userId }: { watchlistId: string; userId:
       {stories.length > 0 && (
         <section className="mt-6 space-y-3">
           {stories.map((story) => (
-            <StoryCard key={story.symbol} story={story} onOpen={() => setOpenStory(story)} />
+            <StoryCard key={story.symbol} story={story} href={`/stocks/${story.symbol}?watchlistId=${watchlistId}`} />
           ))}
         </section>
       )}
@@ -119,7 +117,9 @@ export function Briefing({ watchlistId, userId }: { watchlistId: string; userId:
                 key={symbol}
                 className="group inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-500"
               >
-                {symbol}
+                <Link href={`/stocks/${symbol}?watchlistId=${watchlistId}`} className="hover:text-zinc-900">
+                  {symbol}
+                </Link>
                 <button
                   onClick={() => removeSymbol.mutate(symbol)}
                   className="text-zinc-300 opacity-0 hover:text-zinc-600 group-hover:opacity-100"
@@ -134,9 +134,6 @@ export function Briefing({ watchlistId, userId }: { watchlistId: string; userId:
         </section>
       )}
 
-      {openStory && (
-        <StoryDrawer story={openStory} watchlistId={watchlistId} userId={userId} onClose={() => setOpenStory(null)} />
-      )}
       {addingSymbol && <AddSymbolDialog watchlistId={watchlistId} onClose={() => setAddingSymbol(false)} />}
     </div>
   );

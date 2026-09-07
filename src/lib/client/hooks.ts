@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
+import { fetchSymbolDetail } from "./detail-api";
 import { marketSession, MarketSession } from "@/lib/market-hours";
 
 /** Pure Date/Intl math, no server dependency — safe to run client-side. Re-checked every minute so the UI reflects the market opening/closing without a reload. */
@@ -120,5 +121,13 @@ export function useHealth() {
     queryKey: ["health"],
     queryFn: () => api.health(),
     refetchInterval: 30_000,
+  });
+}
+
+export function useSymbolDetail(symbol: string | undefined, watchlistId: string | undefined, userId: string | undefined) {
+  return useQuery({
+    queryKey: ["symbol-detail", symbol, watchlistId, userId],
+    queryFn: () => fetchSymbolDetail(symbol!, watchlistId!, userId!),
+    enabled: !!symbol && !!watchlistId && !!userId,
   });
 }
