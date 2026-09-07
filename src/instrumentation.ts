@@ -10,5 +10,5 @@ export async function register() {
   if (process.env.NODE_ENV === "test") return;
 
   const { startBackgroundJobs } = await import("@/lib/pipeline/scheduler");
-  startBackgroundJobs();
+  await startBackgroundJobs();
 }

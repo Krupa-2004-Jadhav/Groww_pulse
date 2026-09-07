@@ -25,6 +25,43 @@ switching to `twelvedata`. Click **"▶ Run demo scenario"** in the sidebar
 for a scripted walkthrough that doesn't depend on market hours (see
 [Demo mode](#demo-mode--resilience) below).
 
+## Deploying
+
+This is a persistent Node process with a background poller
+(`src/instrumentation.ts` keeps the ingest/evaluation loop running for the
+life of the process) — it needs a host that runs a normal long-lived
+server, not a serverless platform's default deploy model (a Vercel
+function, for instance, doesn't stay alive between requests, so the
+poller would never actually run). **[Render](https://render.com)'s free
+Web Service tier fits directly: `render.yaml` in this repo is a ready-to-use
+Blueprint.**
+
+1. Push this repo to GitHub (already done if you're reading this there).
+2. On Render: **New → Blueprint**, point it at the repo. It reads
+   `render.yaml` and provisions the service automatically —
+   `MARKET_PROVIDER=replay` by default (deterministic, no live-market or
+   API-credit dependency, safest choice for something judges will open at
+   an unpredictable time).
+3. First boot runs `prisma migrate deploy` then auto-seeds the scripted
+   demo scenario if the database is empty (`lib/pipeline/scheduler.ts`) —
+   so the shared demo link shows a populated, story-filled watchlist
+   immediately, with no manual step.
+4. To use real market data instead, add `TWELVEDATA_API_KEY` as a secret
+   env var on the Render service and change `MARKET_PROVIDER` to
+   `twelvedata`.
+
+**Two things worth knowing about the free tier specifically:**
+- The service spins down after ~15 minutes idle and cold-starts (30–60s)
+  on the next request — normal for a free host, not a bug. The first
+  open of the link after a quiet period will be slow; everything after
+  that is fast.
+- The disk is ephemeral — SQLite resets on every restart/redeploy. That's
+  *why* the auto-seed exists: a fresh boot always looks the same as
+  clicking "Run demo scenario" once, rather than booting empty. Real
+  production use would move `datasource` to `postgresql`
+  (`prisma/schema.prisma` was written to be Postgres-portable — see "what
+  breaks first at 100×" below) on a host with a persistent database.
+
 ## The three required capabilities
 
 | Capability | Where |

@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: groww-pulse
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.12.2
+      - key: DATABASE_URL
+        value: file:./dev.db
+      - key: MARKET_PROVIDER
+        value: replay # deterministic, no live dependency — safest default for a judged demo. Switch to "twelvedata" + add TWELVEDATA_API_KEY as a secret to use real market data instead.
