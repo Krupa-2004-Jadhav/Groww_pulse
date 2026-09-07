@@ -296,11 +296,29 @@ the signal functions, or the scoring logic.
 
 **Honest data caveat:** the free tier covers US-exchange symbols only —
 other exchanges need a paid tier (the engine itself is exchange-agnostic;
-only the ticker universe changes). Live corporate-action data (splits) can
-take up to 48h to reflect in Twelve Data's feed due to their verification
-process, so split-handling is demonstrated deterministically via
-`ReplayProvider` (see [Demo mode](#demo-mode--resilience)) rather than
-depending on a real split happening to occur during grading.
+only the ticker universe changes).
+
+**A more significant caveat than initially assumed, confirmed by actually
+switching the app over to live data (not just curling the endpoint once):**
+`/splits` is not reliably available on the free Basic plan at all, and
+that's *separate* from the up-to-48h verification lag corporate actions
+carry. Testing a single symbol (AAPL) early on made `/splits` look free-tier
+— it succeeds. But TSLA's and AMZN's `/splits` calls return a 403 on the
+identical key: `"available exclusively with grow/pro/ultra/venture/
+enterprise plans"`. Free-tier `/splits` access is apparently
+symbol-specific (AAPL reads as a showcase/demo symbol on Twelve Data's
+side), not a blanket guarantee — a real one-symbol-test generalization
+error, not a documentation typo. `seedSymbolHistory` (`lib/seed/
+historical-seed.ts`) now fetches bars and splits as two independent calls
+rather than one `Promise.all`, so a `/splits` 403 can't take the
+actually-essential bars down with it; a symbol with no free `/splits`
+access just gets `adj_factor = 1.0` (no adjustment applied, never a
+fabricated one), surfaced honestly via a `splitsAvailable` field on the
+seed result rather than silently swallowed. Split-handling itself is still
+demonstrated deterministically via `ReplayProvider` (see [Demo
+mode](#demo-mode--resilience)) regardless of which live provider is
+configured — the demo scenario always uses its own `ReplayProvider`
+instance, independent of `MARKET_PROVIDER`.
 
 ## Demo mode & resilience
 
